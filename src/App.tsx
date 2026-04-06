@@ -304,7 +304,7 @@ function Auth({ mode, onBack, onAuth, onSwitch }) {
 /* ═══════════════════════════════════════════════
    MAIN APP
 ═══════════════════════════════════════════════ */
-function App({ user, onLogout }) {
+function AppContent({ user, onLogout }) {
   const [notebooks, setNotebooks] = useState([]);
   const [activeNb, setActiveNb] = useState(null);
   const [sources, setSources] = useState([]);
@@ -921,55 +921,80 @@ function App({ user, onLogout }) {
 /* ═══════════════════════════════════════════════
    ROOT — handles auth state
 ═══════════════════════════════════════════════ */
-export default function Root() {
-  const [page, setPage] = useState("landing");
-  const [authMode, setAuthMode] = useState("login");
+export default function App() {
   const [user, setUser] = useState(null);
-  const [checking, setChecking] = useState(true);
+  const [page, setPage] = useState("loading"); // Start in loading mode
+  const [authMode, setAuthMode] = useState("login");
 
   useEffect(() => {
-    // Check if user is already logged in
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-        setUser({ id: session.user.id, name: profile?.name || session.user.email?.split("@")[0], email: session.user.email });
+    // This is the magic: It checks the browser for your 5-second-old session
+    const restoreSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session) {
+        // If Google session found, jump straight to the app
+        setUser({ 
+          id: session.user.id, 
+          name: session.user.user_metadata?.name || session.user.email.split("@")[0],
+          email: session.user.email 
+        });
         setPage("app");
+      } else {
+        // Otherwise, show the landing page
+        setPage("landing");
       }
-      setChecking(false);
+    };
+
+    restoreSession();
+
+    // This catches the session if the Google Redirect is still finishing
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setUser({ 
+          id: session.user.id, 
+          name: session.user.user_metadata?.name || session.user.email.split("@")[0], 
+          email: session.user.email 
+        });
+        setPage("app");
+      } else {
+        setUser(null);
+        setPage("landing");
+      }
     });
 
-    // Listen for auth changes (e.g. Google OAuth redirect)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "SIGNED_IN" && session?.user) {
-        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-        if (!profile) {
-          await supabase.from("profiles").upsert({ id: session.user.id, name: session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
-        }
-        setUser({ id: session.user.id, name: profile?.name || session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
-        setPage("app");
-      }
-    });
     return () => subscription.unsubscribe();
   }, []);
 
-  if (checking) {
+  // --- RENDER LOGIC (Uses your C.bg and UI structure) ---
+  
+  if (page === "loading") {
     return (
-      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-        <Spinner size={40} />
+      <div style={{ minHeight: "100vh", background: "#07080a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ border: '3px solid rgba(59, 126, 246, 0.1)', borderTop: '3px solid #3b7ef6', borderRadius: '50%', width: '32px', height: '32px', animation: 'spin .8s linear infinite' }}></div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
-  if (page === "landing") return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
-  if (page === "auth") return (
-    <Auth
-      mode={authMode}
-      onBack={() => setPage("landing")}
-      onSwitch={() => setAuthMode(m => m === "login" ? "signup" : "login")}
-      onAuth={(u) => { if (u) { setUser(u); setPage("app"); } }}
-    />
-  );
-  if (page === "app" && user) return <App user={user} onLogout={() => { setUser(null); setPage("landing"); }} />;
-  return null;
+  if (page === "landing") {
+    return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
+  }
+
+  if (page === "auth") {
+    return (
+      <Auth 
+        mode={authMode} 
+        onBack={() => setPage("landing")} 
+        onSwitch={() => setAuthMode(authMode === "login" ? "signup" : "login")}
+        onAuth={(u) => { setUser(u); setPage("app"); }} 
+      />
+    );
+  }
+
+  if (page === "app" && user) {
+    // This calls your original UI (which we renamed to AppContent)
+    return <AppContent user={user} onLogout={async () => { await supabase.auth.signOut(); setPage("landing"); }} />;
+  }
+
+  return <Landing onLogin={() => setPage("auth")} />;
 }
