@@ -317,6 +317,8 @@ function AppContent({ user, onLogout }) {
   const [srcTitle, setSrcTitle] = useState("");
   const [srcText, setSrcText] = useState("");
   const [srcType, setSrcType] = useState("text");
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
   const [showNewNb, setShowNewNb] = useState(false);
   const [newNbTitle, setNewNbTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
@@ -375,23 +377,48 @@ function AppContent({ user, onLogout }) {
   };
 
   const addSource = async () => {
-    if (!srcText.trim()) return;
-    const { data, error } = await supabase.from("sources").insert({
-      notebook_id: activeNb, user_id: user.id,
-      title: srcTitle || `Source ${sources.length + 1}`,
-      content: srcText, type: srcType,
-    }).select().single();
-    if (!error && data) {
-      setSources(p => [...p, data]);
-      setSrcText(""); setSrcTitle(""); setShowAddSrc(false); setSuggestions([]); setStudioResult({});
+    if (srcType === 'text' && !srcText.trim()) return;
+    if (srcType === 'file' && !selectedFile) return;
+    setIsUploading(true);
+    try {
+      let finalContent = srcText;
+      let finalTitle = srcTitle || (selectedFile ? selectedFile.name : `Source ${sources.length + 1}`);
+      
+      if (srcType === 'file' && selectedFile) {
+        const fileExt = selectedFile.name.split('.').pop();
+        const fileName = `${uid()}.${fileExt}`;
+        const filePath = `${activeNb}/${fileName}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('source-files') 
+          .upload(filePath, selectedFile);
+          
+        if (uploadError) throw uploadError;
+        
+        const { data: { publicUrl } } = supabase.storage
+          .from('source-files')
+          .getPublicUrl(filePath);
+          
+        finalContent = publicUrl;
+      }
+
+      const { data, error } = await supabase.from("sources").insert({
+        notebook_id: activeNb, user_id: user.id,
+        title: finalTitle, content: finalContent, type: srcType,
+      }).select().single();
+
+      if (!error && data) {
+        setSources(p => [...p, data]);
+        setSrcText(""); setSrcTitle(""); setSelectedFile(null);
+        setShowAddSrc(false); setSuggestions([]); setStudioResult({});
+      }
+    } catch (err) {
+      alert("Upload failed: " + err.message);
+    } finally {
+      setIsUploading(false);
     }
   };
-
-  const removeSource = async (id) => {
-    await supabase.from("sources").delete().eq("id", id);
-    setSources(p => p.filter(s => s.id !== id));
-  };
-
+  
   const openNotebook = async (nb) => {
     setActiveNb(nb.id); setNbTitle(nb.title);
     setChats([]); setStudioResult({}); setSuggestions([]);
