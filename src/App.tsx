@@ -23,7 +23,12 @@ const C = {
 async function claude(messages, system, onStream) {
   const r = await fetch(API, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { 
+      "Content-Type": "application/json",
+      "x-api-key": "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_Gcsg49-rifNd55F7dS0zRJ1eZKX-Z80RPnCH61ojanw-8vyDmQAA",
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
     body: JSON.stringify({ model: MODEL, max_tokens: 1000, system, messages, stream: !!onStream }),
   });
   if (!onStream) {
@@ -418,7 +423,7 @@ function AppContent({ user, onLogout }) {
       setIsUploading(false);
     }
   };
-  
+
   const openNotebook = async (nb) => {
     setActiveNb(nb.id); setNbTitle(nb.title);
     setChats([]); setStudioResult({}); setSuggestions([]);
