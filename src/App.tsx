@@ -20,14 +20,15 @@ const C = {
 };
 
 /* ─────────────── CLAUDE API ─────────────── */
+const ANTHROPIC_KEY = "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_Gcsg49-rifNd55F7dS0zRJ1eZKX-Z80RPnCH6lojanw-8vyDmQAA"; // Replace with your key from console.anthropic.com
 async function claude(messages, system, onStream) {
   const r = await fetch(API, {
     method: "POST",
-    headers: { 
+    headers: {
       "Content-Type": "application/json",
-      "x-api-key": "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_Gcsg49-rifNd55F7dS0zRJ1eZKX-Z80RPnCH61ojanw-8vyDmQAA",
+      "x-api-key": ANTHROPIC_KEY,
       "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
+      "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({ model: MODEL, max_tokens: 1000, system, messages, stream: !!onStream }),
   });
@@ -309,7 +310,7 @@ function Auth({ mode, onBack, onAuth, onSwitch }) {
 /* ═══════════════════════════════════════════════
    MAIN APP
 ═══════════════════════════════════════════════ */
-function AppContent({ user, onLogout }) {
+function App({ user, onLogout }) {
   const [notebooks, setNotebooks] = useState([]);
   const [activeNb, setActiveNb] = useState(null);
   const [sources, setSources] = useState([]);
@@ -322,8 +323,6 @@ function AppContent({ user, onLogout }) {
   const [srcTitle, setSrcTitle] = useState("");
   const [srcText, setSrcText] = useState("");
   const [srcType, setSrcType] = useState("text");
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [showNewNb, setShowNewNb] = useState(false);
   const [newNbTitle, setNewNbTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
@@ -382,46 +381,42 @@ function AppContent({ user, onLogout }) {
   };
 
   const addSource = async () => {
-    if (srcType === 'text' && !srcText.trim()) return;
-    if (srcType === 'file' && !selectedFile) return;
+    if (!srcText.trim() && !selectedFile) return;
     setIsUploading(true);
     try {
       let finalContent = srcText;
       let finalTitle = srcTitle || (selectedFile ? selectedFile.name : `Source ${sources.length + 1}`);
-      
-      if (srcType === 'file' && selectedFile) {
-        const fileExt = selectedFile.name.split('.').pop();
-        const fileName = `${uid()}.${fileExt}`;
-        const filePath = `${activeNb}/${fileName}`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from('source-files') 
-          .upload(filePath, selectedFile);
-          
-        if (uploadError) throw uploadError;
-        
-        const { data: { publicUrl } } = supabase.storage
-          .from('source-files')
-          .getPublicUrl(filePath);
-          
-        finalContent = publicUrl;
+      let finalType = srcType;
+      if (selectedFile) {
+        const text = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string || "");
+          reader.onerror = () => reject(new Error("Failed to read file"));
+          reader.readAsText(selectedFile);
+        });
+        finalContent = text;
+        finalTitle = srcTitle || selectedFile.name;
+        finalType = selectedFile.name.split('.').pop() || 'file';
       }
-
       const { data, error } = await supabase.from("sources").insert({
         notebook_id: activeNb, user_id: user.id,
-        title: finalTitle, content: finalContent, type: srcType,
+        title: finalTitle, content: finalContent, type: finalType,
       }).select().single();
-
       if (!error && data) {
         setSources(p => [...p, data]);
         setSrcText(""); setSrcTitle(""); setSelectedFile(null);
         setShowAddSrc(false); setSuggestions([]); setStudioResult({});
       }
-    } catch (err) {
+    } catch (err: any) {
       alert("Upload failed: " + err.message);
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const removeSource = async (id) => {
+    await supabase.from("sources").delete().eq("id", id);
+    setSources(p => p.filter(s => s.id !== id));
   };
 
   const openNotebook = async (nb) => {
@@ -935,13 +930,21 @@ function AppContent({ user, onLogout }) {
               <label style={{ display: "block", fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Title</label>
               <input value={srcTitle} onChange={e => setSrcTitle(e.target.value)} placeholder="Source title..." style={{ width: "100%", padding: "11px 14px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontSize: 13, fontFamily: "inherit" }} />
             </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: "block", fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Upload File (optional)</label>
+              <input type="file" accept=".txt,.pdf,.doc,.docx,.md,.csv,.json,.html,.xml,.py,.js,.ts" onChange={e => { const f = e.target.files?.[0]; if (f) { setSelectedFile(f); if (!srcTitle) setSrcTitle(f.name); } }}
+                style={{ width: "100%", padding: "11px 14px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontSize: 13, fontFamily: "inherit" }} />
+              {selectedFile && <div style={{ marginTop: 8, fontSize: 12, color: C.green }}>✅ {selectedFile.name} selected</div>}
+            </div>
             <div style={{ marginBottom: 22 }}>
-              <label style={{ display: "block", fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Content</label>
-              <textarea value={srcText} onChange={e => setSrcText(e.target.value)} placeholder="Paste your content here..." rows={9} style={{ width: "100%", padding: "12px 14px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontSize: 13, resize: "vertical", fontFamily: "inherit", lineHeight: 1.65 }} />
+              <label style={{ display: "block", fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Or Paste Content</label>
+              <textarea value={srcText} onChange={e => setSrcText(e.target.value)} placeholder="Paste your content here..." rows={7} style={{ width: "100%", padding: "12px 14px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontSize: 13, resize: "vertical", fontFamily: "inherit", lineHeight: 1.65 }} />
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <Btn variant="ghost" onClick={() => { setShowAddSrc(false); setSrcText(""); setSrcTitle(""); }}>Cancel</Btn>
-              <Btn onClick={addSource} disabled={!srcText.trim()}>Save Source</Btn>
+              <Btn variant="ghost" onClick={() => { setShowAddSrc(false); setSrcText(""); setSrcTitle(""); setSelectedFile(null); }}>Cancel</Btn>
+              <Btn onClick={addSource} disabled={(!srcText.trim() && !selectedFile) || isUploading}>
+                {isUploading ? <><Spinner size={13} color="#fff" /> Uploading...</> : "Save Source"}
+              </Btn>
             </div>
           </div>
         </div>
@@ -953,80 +956,55 @@ function AppContent({ user, onLogout }) {
 /* ═══════════════════════════════════════════════
    ROOT — handles auth state
 ═══════════════════════════════════════════════ */
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [page, setPage] = useState("loading"); // Start in loading mode
+export default function Root() {
+  const [page, setPage] = useState("landing");
   const [authMode, setAuthMode] = useState("login");
+  const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    // This is the magic: It checks the browser for your 5-second-old session
-    const restoreSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session) {
-        // If Google session found, jump straight to the app
-        setUser({ 
-          id: session.user.id, 
-          name: session.user.user_metadata?.name || session.user.email.split("@")[0],
-          email: session.user.email 
-        });
+    // Check if user is already logged in
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+        setUser({ id: session.user.id, name: profile?.name || session.user.email?.split("@")[0], email: session.user.email });
         setPage("app");
-      } else {
-        // Otherwise, show the landing page
-        setPage("landing");
       }
-    };
-
-    restoreSession();
-
-    // This catches the session if the Google Redirect is still finishing
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        setUser({ 
-          id: session.user.id, 
-          name: session.user.user_metadata?.name || session.user.email.split("@")[0], 
-          email: session.user.email 
-        });
-        setPage("app");
-      } else {
-        setUser(null);
-        setPage("landing");
-      }
+      setChecking(false);
     });
 
+    // Listen for auth changes (e.g. Google OAuth redirect)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+        if (!profile) {
+          await supabase.from("profiles").upsert({ id: session.user.id, name: session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
+        }
+        setUser({ id: session.user.id, name: profile?.name || session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
+        setPage("app");
+      }
+    });
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- RENDER LOGIC (Uses your C.bg and UI structure) ---
-  
-  if (page === "loading") {
+  if (checking) {
     return (
-      <div style={{ minHeight: "100vh", background: "#07080a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ border: '3px solid rgba(59, 126, 246, 0.1)', borderTop: '3px solid #3b7ef6', borderRadius: '50%', width: '32px', height: '32px', animation: 'spin .8s linear infinite' }}></div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <Spinner size={40} />
       </div>
     );
   }
 
-  if (page === "landing") {
-    return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
-  }
-
-  if (page === "auth") {
-    return (
-      <Auth 
-        mode={authMode} 
-        onBack={() => setPage("landing")} 
-        onSwitch={() => setAuthMode(authMode === "login" ? "signup" : "login")}
-        onAuth={(u) => { setUser(u); setPage("app"); }} 
-      />
-    );
-  }
-
-  if (page === "app" && user) {
-    // This calls your original UI (which we renamed to AppContent)
-    return <AppContent user={user} onLogout={async () => { await supabase.auth.signOut(); setPage("landing"); }} />;
-  }
-
-  return <Landing onLogin={() => setPage("auth")} />;
+  if (page === "landing") return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
+  if (page === "auth") return (
+    <Auth
+      mode={authMode}
+      onBack={() => setPage("landing")}
+      onSwitch={() => setAuthMode(m => m === "login" ? "signup" : "login")}
+      onAuth={(u) => { if (u) { setUser(u); setPage("app"); } }}
+    />
+  );
+  if (page === "app" && user) return <App user={user} onLogout={() => { setUser(null); setPage("landing"); }} />;
+  return null;
 }
