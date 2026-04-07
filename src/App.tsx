@@ -963,19 +963,11 @@ export default function Root() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    // Check if user is already logged in
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-        setUser({ id: session.user.id, name: profile?.name || session.user.email?.split("@")[0], email: session.user.email });
-        setPage("app");
-      }
-      setChecking(false);
-    });
+    let handled = false;
 
-    // Listen for auth changes (e.g. Google OAuth redirect)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "SIGNED_IN" && session?.user) {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user && !handled) {
+        handled = true;
         const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
         if (!profile) {
           await supabase.from("profiles").upsert({ id: session.user.id, name: session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
@@ -983,14 +975,34 @@ export default function Root() {
         setUser({ id: session.user.id, name: profile?.name || session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
         setPage("app");
       }
+      setChecking(false);
     });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_IN" && session?.user && !handled) {
+        handled = true;
+        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+        if (!profile) {
+          await supabase.from("profiles").upsert({ id: session.user.id, name: session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
+        }
+        setUser({ id: session.user.id, name: profile?.name || session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
+        setPage("app");
+        setChecking(false);
+      } else if (event === "SIGNED_OUT") {
+        handled = false;
+        setUser(null);
+        setPage("landing");
+        setChecking(false);
+      }
+    });
+
     return () => subscription.unsubscribe();
   }, []);
 
   if (checking) {
     return (
       <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         <Spinner size={40} />
       </div>
     );
@@ -1005,6 +1017,6 @@ export default function Root() {
       onAuth={(u) => { if (u) { setUser(u); setPage("app"); } }}
     />
   );
-  if (page === "app" && user) return <App user={user} onLogout={() => { setUser(null); setPage("landing"); }} />;
-  return null;
+  if (page === "app" && user) return <App user={user} onLogout={async () => { await supabase.auth.signOut(); setUser(null); setPage("landing"); }} />;
+  return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
 }
