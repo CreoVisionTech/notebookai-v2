@@ -20,7 +20,7 @@ const C = {
 };
 
 /* ─────────────── CLAUDE API ─────────────── */
-const ANTHROPIC_KEY = "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_Gcsg49-rifNd55F7dS0zRJ1eZKX-Z80RPnCH6lojanw-8vyDmQAA"; // Replace with your key from console.anthropic.com
+const ANTHROPIC_KEY = "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_Gcsg49-rifNd55F7dS0zRJ1eZKX-Z80RPnCH61ojanw-8vyDmQAA"; // Replace with your key from console.anthropic.com
 async function claude(messages, system, onStream) {
   const r = await fetch(API, {
     method: "POST",
@@ -310,7 +310,7 @@ function Auth({ mode, onBack, onAuth, onSwitch }) {
 /* ═══════════════════════════════════════════════
    MAIN APP
 ═══════════════════════════════════════════════ */
-function App({ user, onLogout }) {
+function App({ user, onLogout }: { user: any; onLogout: () => void }) {
   const [notebooks, setNotebooks] = useState([]);
   const [activeNb, setActiveNb] = useState(null);
   const [sources, setSources] = useState([]);
@@ -957,66 +957,63 @@ function App({ user, onLogout }) {
    ROOT — handles auth state
 ═══════════════════════════════════════════════ */
 export default function Root() {
-  const [page, setPage] = useState("landing");
-  const [authMode, setAuthMode] = useState("login");
-  const [user, setUser] = useState(null);
-  const [checking, setChecking] = useState(true);
+  const [page, setPage] = useState<"loading"|"landing"|"auth"|"app">("loading");
+  const [authMode, setAuthMode] = useState<"login"|"signup">("login");
+  const [user, setUser] = useState<any>(null);
+
+  const buildUser = (session: any) => ({
+    id: session.user.id,
+    name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split("@")[0],
+    email: session.user.email,
+  });
+
+  const ensureProfile = async (session: any) => {
+    const u = buildUser(session);
+    await supabase.from("profiles").upsert({ id: u.id, name: u.name, email: u.email }, { onConflict: "id", ignoreDuplicates: true });
+    return u;
+  };
 
   useEffect(() => {
-    let handled = false;
-
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user && !handled) {
-        handled = true;
-        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-        if (!profile) {
-          await supabase.from("profiles").upsert({ id: session.user.id, name: session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
-        }
-        setUser({ id: session.user.id, name: profile?.name || session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
-        setPage("app");
-      }
-      setChecking(false);
-    });
-
+    // Listen for ALL auth state changes — this is the single source of truth
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "SIGNED_IN" && session?.user && !handled) {
-        handled = true;
-        const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-        if (!profile) {
-          await supabase.from("profiles").upsert({ id: session.user.id, name: session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
-        }
-        setUser({ id: session.user.id, name: profile?.name || session.user.user_metadata?.name || session.user.email?.split("@")[0], email: session.user.email });
+      if (session?.user) {
+        const u = await ensureProfile(session);
+        setUser(u);
         setPage("app");
-        setChecking(false);
-      } else if (event === "SIGNED_OUT") {
-        handled = false;
+      } else {
         setUser(null);
         setPage("landing");
-        setChecking(false);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  if (checking) {
-    return (
-      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        <Spinner size={40} />
-      </div>
-    );
-  }
+  const logout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setPage("landing");
+  };
+
+  if (page === "loading") return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <Spinner size={40} />
+    </div>
+  );
 
   if (page === "landing") return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
+
   if (page === "auth") return (
     <Auth
       mode={authMode}
       onBack={() => setPage("landing")}
       onSwitch={() => setAuthMode(m => m === "login" ? "signup" : "login")}
-      onAuth={(u) => { if (u) { setUser(u); setPage("app"); } }}
+      onAuth={(u: any) => { if (u) { setUser(u); setPage("app"); } }}
     />
   );
-  if (page === "app" && user) return <App user={user} onLogout={async () => { await supabase.auth.signOut(); setUser(null); setPage("landing"); }} />;
+
+  if (page === "app" && user) return <App user={user} onLogout={logout} />;
+
   return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
 }
