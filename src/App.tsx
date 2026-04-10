@@ -392,9 +392,18 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
       if (selectedFile) {
         const text = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string || "");
+          reader.onload = (e) => {
+            const result = e.target?.result as string || "";
+            // For PDFs, extract readable text portions
+            const cleaned = result
+              .replace(/[^\x20-\x7E\n\r\t]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+            resolve(cleaned.length > 100 ? cleaned : `[File: ${selectedFile.name}] - Content could not be fully extracted. Please paste the text content manually.`);
+          };
           reader.onerror = () => reject(new Error("Failed to read file"));
-          reader.readAsText(selectedFile);
+          // Use readAsBinaryString for better PDF text extraction
+          reader.readAsBinaryString(selectedFile);
         });
         finalContent = text;
         finalTitle = srcTitle || selectedFile.name;
