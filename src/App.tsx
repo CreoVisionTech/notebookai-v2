@@ -957,63 +957,69 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
    ROOT — handles auth state
 ═══════════════════════════════════════════════ */
 export default function Root() {
-  const [page, setPage] = useState<"loading"|"landing"|"auth"|"app">("loading");
-  const [authMode, setAuthMode] = useState<"login"|"signup">("login");
+  const [authMode, setAuthMode] = useState("login");
   const [user, setUser] = useState<any>(null);
-
-  const buildUser = (session: any) => ({
-    id: session.user.id,
-    name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split("@")[0],
-    email: session.user.email,
-  });
-
-  const ensureProfile = async (session: any) => {
-    const u = buildUser(session);
-    await supabase.from("profiles").upsert({ id: u.id, name: u.name, email: u.email }, { onConflict: "id", ignoreDuplicates: true });
-    return u;
-  };
+  const [ready, setReady] = useState(false);
+  const initialized = useRef(false);
 
   useEffect(() => {
-    // Listen for ALL auth state changes — this is the single source of truth
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    if (initialized.current) return;
+    initialized.current = true;
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        const u = await ensureProfile(session);
-        setUser(u);
-        setPage("app");
-      } else {
+        setUser({
+          id: session.user.id,
+          name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split("@")[0],
+          email: session.user.email,
+        });
+      }
+      setReady(true);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        setUser({
+          id: session.user.id,
+          name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split("@")[0],
+          email: session.user.email,
+        });
+        setReady(true);
+      }
+      if (event === "SIGNED_OUT") {
         setUser(null);
-        setPage("landing");
+        setReady(true);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setPage("landing");
-  };
-
-  if (page === "loading") return (
+  if (!ready) return (
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       <Spinner size={40} />
     </div>
   );
 
-  if (page === "landing") return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
+  if (user) return (
+    <App user={user} onLogout={async () => {
+      await supabase.auth.signOut();
+      setUser(null);
+    }} />
+  );
 
-  if (page === "auth") return (
+  if (authMode === "auth_login" || authMode === "auth_signup") return (
     <Auth
-      mode={authMode}
-      onBack={() => setPage("landing")}
-      onSwitch={() => setAuthMode(m => m === "login" ? "signup" : "login")}
-      onAuth={(u: any) => { if (u) { setUser(u); setPage("app"); } }}
+      mode={authMode === "auth_login" ? "login" : "signup"}
+      onBack={() => setAuthMode("login")}
+      onSwitch={() => setAuthMode(m => m === "auth_login" ? "auth_signup" : "auth_login")}
+      onAuth={(u: any) => { if (u) setUser(u); }}
     />
   );
 
-  if (page === "app" && user) return <App user={user} onLogout={logout} />;
-
-  return <Landing onLogin={() => { setAuthMode("login"); setPage("auth"); }} onSignup={() => { setAuthMode("signup"); setPage("auth"); }} />;
+  return <Landing
+    onLogin={() => setAuthMode("auth_login")}
+    onSignup={() => setAuthMode("auth_signup")}
+  />;
 }
