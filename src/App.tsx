@@ -21,31 +21,17 @@ const C = {
 
 /* ─────────────── CLAUDE API ─────────────── */
 const ANTHROPIC_KEY = "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_Gcsg49-rifNd55F7dS0zRJ1eZKX-Z80RPnCH61ojanw-8vyDmQAA"; // Replace with your key from console.anthropic.com
-async function claude(messages, system, onStream) {
+async function claude(messages: any[], system: string, onStream: ((t: string) => void) | null) {
   const r = await fetch(API, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, max_tokens: 1000, system, messages, stream: !!onStream }),
+    body: JSON.stringify({ model: MODEL, max_tokens: 1000, system, messages, stream: false }),
   });
-  if (!onStream) {
-    const d = await r.json();
-    return d.content?.map((b) => b.text || "").join("") || "";
-  }
-  const reader = r.body.getReader();
-  const dec = new TextDecoder();
-  let full = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    for (const line of dec.decode(value).split("\n")) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const d = JSON.parse(line.slice(6));
-        if (d.delta?.text) { full += d.delta.text; onStream(full); }
-      } catch {}
-    }
-  }
-  return full;
+  const data = await r.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  const text = data.content?.map((b: any) => b.text || "").join("") || "";
+  if (onStream) onStream(text);
+  return text;
 }
 
 /* ─────────────── MARKDOWN ─────────────── */
