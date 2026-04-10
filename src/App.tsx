@@ -7,7 +7,7 @@ const SUPABASE_KEY = "sb_publishable_wXi-6DWmkw_sceAzMtPvgA_31QvjpZp";
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ─────────────── CONSTANTS ─────────────── */
-const API = "https://api.anthropic.com/v1/messages";
+const API = "/api/chat";
 const MODEL = "claude-sonnet-4-20250514";
 
 const C = {
@@ -24,12 +24,7 @@ const ANTHROPIC_KEY = "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_G
 async function claude(messages, system, onStream) {
   const r = await fetch(API, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: MODEL, max_tokens: 1000, system, messages, stream: !!onStream }),
   });
   if (!onStream) {
