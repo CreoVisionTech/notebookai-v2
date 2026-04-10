@@ -11,6 +11,9 @@ export default async function handler(req: any, res: any) {
         req.on("error", reject);
       });
   
+      // Force streaming OFF
+      body.stream = false;
+  
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
