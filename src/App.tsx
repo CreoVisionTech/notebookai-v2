@@ -20,7 +20,7 @@ const C = {
 };
 
 /* ─────────────── CLAUDE API ─────────────── */
-const ANTHROPIC_KEY = "sk-ant-api03-fJIrR8Z4qF3FGsIFUerLOJDCrH6b4knxVe19JsL3-u_Gcsg49-rifNd55F7dS0zRJ1eZKX-Z80RPnCH61ojanw-8vyDmQAA"; // Replace with your key from console.anthropic.com
+
 async function claude(messages: any[], system: string, onStream: ((t: string) => void) | null) {
   const r = await fetch(API, {
     method: "POST",
