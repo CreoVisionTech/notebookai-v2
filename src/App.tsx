@@ -8,7 +8,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ─────────────── CONSTANTS ─────────────── */
 const API = "/api/chat";
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "llama-3.3-70b-versatile";
 
 const C = {
   bg: "#07080a", surface: "#0e1117", card: "#131720", border: "#1e2433",
@@ -19,8 +19,7 @@ const C = {
   textMuted: "#64748b", textDim: "#94a3b8",
 };
 
-/* ─────────────── CLAUDE API ─────────────── */
-
+/* ─────────────── API ─────────────── */
 async function claude(messages: any[], system: string, onStream: ((t: string) => void) | null) {
   const r = await fetch(API, {
     method: "POST",
@@ -28,7 +27,7 @@ async function claude(messages: any[], system: string, onStream: ((t: string) =>
     body: JSON.stringify({ model: MODEL, max_tokens: 1000, system, messages, stream: false }),
   });
   const data = await r.json();
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
   const text = data.content?.map((b: any) => b.text || "").join("") || "";
   if (onStream) onStream(text);
   return text;
@@ -304,8 +303,6 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
   const [srcTitle, setSrcTitle] = useState("");
   const [srcText, setSrcText] = useState("");
   const [srcType, setSrcType] = useState("text");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [showNewNb, setShowNewNb] = useState(false);
   const [newNbTitle, setNewNbTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
@@ -373,18 +370,9 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
       if (selectedFile) {
         const text = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onload = (e) => {
-            const result = e.target?.result as string || "";
-            // For PDFs, extract readable text portions
-            const cleaned = result
-              .replace(/[^\x20-\x7E\n\r\t]/g, " ")
-              .replace(/\s+/g, " ")
-              .trim();
-            resolve(cleaned.length > 100 ? cleaned : `[File: ${selectedFile.name}] - Content could not be fully extracted. Please paste the text content manually.`);
-          };
+          reader.onload = (e) => resolve(e.target?.result as string || "");
           reader.onerror = () => reject(new Error("Failed to read file"));
-          // Use readAsBinaryString for better PDF text extraction
-          reader.readAsBinaryString(selectedFile);
+          reader.readAsText(selectedFile);
         });
         finalContent = text;
         finalTitle = srcTitle || selectedFile.name;
@@ -419,8 +407,8 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
 
   /* ── AI ── */
   const sys = useCallback(() => {
-    const ctx = sources.map((s, i) => `[Source ${i + 1}: "${s.title}"]\n${s.content?.slice(0, 3000) || ""}`).join("\n\n---\n\n");
-    return `You are NotebookAI, an expert research assistant. ${ctx ? `Use ONLY these sources:\n\n${ctx}\n\nAlways cite sources by name.` : "No sources yet — ask user to add sources."}`;
+    const ctx = sources.map((s, i) => `[Source ${i + 1}: "${s.title}"]\n${(s.content || "").slice(0, 2000)}`).join("\n\n---\n\n");
+    return `You are NotebookAI, an expert AI research assistant. Be thorough, accurate and helpful. ${ctx ? `Base your responses ONLY on these sources:\n\n${ctx}\n\nAlways cite sources by name when referencing them.` : "No sources uploaded yet. Ask the user to add sources first."}`;
   }, [sources]);
 
   const send = async () => {
@@ -443,30 +431,78 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
     } catch { setSuggestions(["What are the key themes?", "What are the main findings?", "What connections exist?", "What are the limitations?"]); }
   };
 
-  const genStudio = async (mode) => {
+  const genStudio = async (mode: string) => {
     if (!sources.length) return;
     setStudioMode(mode); setStudioLoading(true);
-    const prompts = {
-      overview: "Write a comprehensive notebook overview: main topics, key insights, connections between sources. Use markdown headers.",
-      summary: "Write a structured summary for each source, then an overall synthesis. Use markdown.",
-      studyguide: "Create a comprehensive study guide with: Key Concepts, Important Facts, Relationships, Review Questions (with answers). Use markdown.",
-      blog: "Write a publication-ready blog post (800-1000 words) based on the sources. Include headline, intro, body with subheadings, conclusion. Use markdown.",
-      slides: "Create a detailed slide deck outline with 8-12 slides. For each: Slide Title, 4-6 bullet points, speaker note. Use markdown.",
+    const prompts: any = {
+      overview: "Write a comprehensive notebook overview with: ## Main Topics, ## Key Insights, ## Connections Between Sources, ## Important Concepts. Use markdown headers and bullet points.",
+      summary: "Write a structured summary. For each source write a ## Source Name header then summarize it in 3-5 bullet points. End with ## Overall Synthesis. Use markdown.",
+      studyguide: "Create a comprehensive study guide with these sections:\n## Key Concepts (term: definition for each)\n## Important Facts (bullet points)\n## Key Relationships\n## Review Questions\n## Quick Reference Glossary\nUse markdown formatting throughout.",
+      blog: "Write a complete, publication-ready blog post (600-800 words) based on the sources. Include:\n# [Compelling Headline]\n## Introduction\n## [Main Section 1]\n## [Main Section 2]\n## [Main Section 3]\n## Conclusion\nMake it engaging and informative.",
+      slides: "Create a complete slide deck with exactly 8 slides. For EACH slide use this exact format:\n## Slide [N]: [Title]\n**Key Points:**\n- Point 1\n- Point 2\n- Point 3\n**Speaker Note:** [note]\n---\nMake slides professional and presentation-ready.",
     };
     try {
-      await claude([{ role: "user", content: prompts[mode] }], sys(), t => setStudioResult(prev => ({ ...prev, [mode]: t })));
-    } catch (e) { setStudioResult(prev => ({ ...prev, [mode]: "Error: " + e.message })); }
+      const result = await claude([{ role: "user", content: prompts[mode] }], sys(), null);
+      setStudioResult((prev: any) => ({ ...prev, [mode]: result }));
+    } catch (e: any) { setStudioResult((prev: any) => ({ ...prev, [mode]: "⚠️ Error: " + e.message })); }
     setStudioLoading(false);
+  };
+
+  const downloadSlides = (content: string) => {
+    // Create a nicely formatted HTML presentation for download
+    const slides = content.split("---").filter(s => s.trim());
+    const slideHTML = slides.map((slide, i) => {
+      const lines = slide.trim().split("\n").filter(l => l.trim());
+      const title = lines[0]?.replace(/^##\s*/, "") || `Slide ${i + 1}`;
+      const body = lines.slice(1).join("\n");
+      return `
+        <div class="slide">
+          <h2>${title}</h2>
+          <div class="content">${body.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/^- (.+)$/gm, "<li>$1</li>").replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>").replace(/\n/g, "<br/>")}</div>
+        </div>`;
+    }).join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Slides</title><style>
+      body{font-family:Georgia,serif;background:#07080a;color:#e2e8f0;margin:0;padding:20px}
+      .slide{background:#131720;border:1px solid #1e2433;border-radius:16px;padding:40px;margin:20px auto;max-width:800px;min-height:300px}
+      h2{color:#3b7ef6;font-size:28px;margin:0 0 20px}
+      .content{font-size:16px;line-height:1.7}
+      ul{margin:10px 0;padding-left:20px}
+      li{margin:8px 0}
+      strong{color:#2dd4bf}
+    </style></head><body>${slideHTML}</body></html>`;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "slides.html"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadText = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const genQuiz = async () => {
     if (!sources.length) return;
     setStudioLoading(true); setStudioMode("quiz");
     try {
-      const r = await claude([{ role: "user", content: `Create a 6-question multiple-choice quiz. Return ONLY valid JSON array: [{"q":"question","options":["A","B","C","D"],"answer":0,"explanation":"..."}]` }], sys(), null);
-      setQuiz(JSON.parse(r.replace(/```json|```/g, "").trim()));
+      const prompt = `Based on the sources, create exactly 6 multiple choice questions. Each question must test real understanding of the content.
+Return ONLY a valid JSON array with no other text, no markdown, no backticks. Format:
+[{"q":"Full question text here?","options":["First option","Second option","Third option","Fourth option"],"answer":0,"explanation":"Why this answer is correct based on the source material"}]
+The "answer" field is the 0-based index of the correct option.`;
+      const r = await claude([{ role: "user", content: prompt }], sys(), null);
+      const clean = r.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Invalid quiz format");
+      setQuiz(parsed);
       setQuizIdx(0); setQuizAns(null); setQuizScore(0); setQuizDone(false);
-    } catch { setQuiz([]); }
+    } catch (e: any) {
+      alert("Quiz generation failed: " + e.message + ". Please try again.");
+      setQuiz([]);
+    }
     setStudioLoading(false);
   };
 
@@ -474,29 +510,71 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
     if (!sources.length) return;
     setStudioLoading(true); setStudioMode("flashcards");
     try {
-      const r = await claude([{ role: "user", content: `Create 8 flashcards. Return ONLY valid JSON array: [{"front":"term","back":"definition"}]` }], sys(), null);
-      setFlashcards(JSON.parse(r.replace(/```json|```/g, "").trim()));
+      const prompt = `Based on the sources, create exactly 8 flashcards covering the most important terms and concepts.
+Return ONLY a valid JSON array with no other text, no markdown, no backticks. Format:
+[{"front":"Term or concept name","back":"Clear, concise definition or explanation from the sources"}]`;
+      const r = await claude([{ role: "user", content: prompt }], sys(), null);
+      const clean = r.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Invalid flashcard format");
+      setFlashcards(parsed);
       setFcIdx(0); setFcFlipped(false);
-    } catch { setFlashcards([]); }
+    } catch (e: any) {
+      alert("Flashcard generation failed. Please try again.");
+      setFlashcards([]);
+    }
     setStudioLoading(false);
   };
 
   const genAudio = async () => {
     if (!sources.length) return;
-    setAudioLoading(true); setAudioScript("");
+    setAudioLoading(true); setAudioScript(""); setAudioPos(0);
     try {
-      await claude([{ role: "user", content: `Create a 5-7 minute podcast script between hosts Alex and Sam discussing the sources. Format:\nALEX: ...\nSAM: ...\nMake it engaging and informative.` }], sys(), t => setAudioScript(t));
-    } catch (e) { setAudioScript("Error: " + e.message); }
+      const prompt = `Create an engaging podcast script between two hosts Alex and Sam discussing the key points from the sources.
+Format EXACTLY like this (each line starts with the speaker name in caps followed by colon):
+ALEX: Welcome to NotebookAI podcast! Today we're diving into some fascinating material. Sam, what caught your attention?
+SAM: [response]
+ALEX: [response]
+Continue for about 20-30 exchanges covering all major topics. Make it conversational, insightful and engaging.`;
+      const result = await claude([{ role: "user", content: prompt }], sys(), null);
+      setAudioScript(result);
+    } catch (e: any) { setAudioScript("⚠️ Error: " + e.message); }
     setAudioLoading(false);
   };
 
+  const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
+
   const toggleAudio = () => {
-    if (audioPlaying) { clearInterval(audioTimerRef.current); setAudioPlaying(false); }
-    else {
+    if (audioPlaying) {
+      window.speechSynthesis.cancel();
+      setAudioPlaying(false);
+    } else {
+      // Use browser's built-in text-to-speech
+      const cleanText = audioScript
+        .split("\n")
+        .filter(l => l.trim())
+        .map(l => l.replace(/^(ALEX|SAM):\s*/, ""))
+        .join(" ");
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.rate = 0.95;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+
+      utterance.onstart = () => setAudioPlaying(true);
+      utterance.onend = () => { setAudioPlaying(false); setAudioPos(100); };
+      utterance.onerror = () => setAudioPlaying(false);
+
+      // Track progress
+      const totalChars = cleanText.length;
+      utterance.onboundary = (e) => {
+        const progress = (e.charIndex / totalChars) * 100;
+        setAudioPos(Math.min(progress, 99));
+      };
+
+      speechRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
       setAudioPlaying(true);
-      audioTimerRef.current = setInterval(() => {
-        setAudioPos(p => { if (p >= 100) { clearInterval(audioTimerRef.current); setAudioPlaying(false); return 100; } return p + 0.15; });
-      }, 100);
     }
   };
 
@@ -883,9 +961,20 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
                 <div style={{ textAlign: "center", padding: "80px 0" }}><Spinner size={36} color={C.accent} /><p style={{ color: C.textMuted, marginTop: 16 }}>Generating...</p></div>
               ) : studioResult[studioMode] ? (
                 <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                    <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{{ overview: "📊 Overview", summary: "📋 Summary", studyguide: "📖 Study Guide", blog: "✍️ Blog Post", slides: "📊 Slide Deck" }[studioMode]}</h2>
-                    <Btn variant="ghost" size="sm" onClick={() => genStudio(studioMode)}>↻ Regenerate</Btn>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+                    <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{{ overview: "📊 Overview", summary: "📋 Summary", studyguide: "📖 Study Guide", blog: "✍️ Blog Post", slides: "📊 Slide Deck" }[studioMode as string]}</h2>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {studioMode === "slides" && (
+                        <Btn variant="teal" size="sm" onClick={() => downloadSlides(studioResult[studioMode])}>⬇️ Download Slides</Btn>
+                      )}
+                      {studioMode === "blog" && (
+                        <Btn variant="teal" size="sm" onClick={() => downloadText(studioResult[studioMode], "blog-post.txt")}>⬇️ Download</Btn>
+                      )}
+                      {studioMode === "studyguide" && (
+                        <Btn variant="teal" size="sm" onClick={() => downloadText(studioResult[studioMode], "study-guide.txt")}>⬇️ Download</Btn>
+                      )}
+                      <Btn variant="ghost" size="sm" onClick={() => genStudio(studioMode)}>↻ Regenerate</Btn>
+                    </div>
                   </div>
                   <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: "24px 28px", fontSize: 14, lineHeight: 1.8, color: C.text }}>
                     <div dangerouslySetInnerHTML={{ __html: md(studioResult[studioMode]) }} />
