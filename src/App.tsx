@@ -419,7 +419,7 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
 
   /* ── AI ── */
   const sys = useCallback(() => {
-    const ctx = sources.map((s, i) => `[Source ${i + 1}: "${s.title}"]\n${s.content}`).join("\n\n---\n\n");
+    const ctx = sources.map((s, i) => `[Source ${i + 1}: "${s.title}"]\n${s.content?.slice(0, 3000) || ""}`).join("\n\n---\n\n");
     return `You are NotebookAI, an expert research assistant. ${ctx ? `Use ONLY these sources:\n\n${ctx}\n\nAlways cite sources by name.` : "No sources yet — ask user to add sources."}`;
   }, [sources]);
 
