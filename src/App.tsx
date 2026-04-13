@@ -367,31 +367,64 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
     if (!srcText.trim() && !selectedFile) return;
     setIsUploading(true);
     try {
-      let finalContent = srcText;
-      let finalTitle = srcTitle || (selectedFile ? selectedFile.name : `Source ${sources.length + 1}`);
+      let finalContent = srcText.trim();
+      let finalTitle = srcTitle.trim() || (selectedFile ? selectedFile.name : `Source ${sources.length + 1}`);
       let finalType = srcType;
+
       if (selectedFile) {
-        const text = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string || "");
-          reader.onerror = () => reject(new Error("Failed to read file"));
-          reader.readAsText(selectedFile);
-        });
-        finalContent = text;
-        finalTitle = srcTitle || selectedFile.name;
-        finalType = selectedFile.name.split('.').pop() || 'file';
+        finalTitle = srcTitle.trim() || selectedFile.name;
+        finalType = selectedFile.name.split('.').pop()?.toLowerCase() || 'file';
+        const ext = finalType;
+
+        if (ext === 'pdf') {
+          // For PDFs: read as binary and extract readable ASCII text
+          finalContent = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              const binary = e.target?.result as string || "";
+              // Extract readable text portions from PDF binary
+              const readable = binary
+                .replace(/[^\x20-\x7E\n\r\t]/g, " ")
+                .replace(/\s{3,}/g, " ")
+                .trim();
+              const meaningful = readable.split(" ").filter(w => w.length > 2).join(" ");
+              resolve(meaningful.slice(0, 8000) || `[PDF file: ${selectedFile.name}. Please paste the text content manually for best AI results.]`);
+            };
+            reader.onerror = () => resolve(`[PDF: ${selectedFile.name}]`);
+            reader.readAsBinaryString(selectedFile);
+          });
+        } else {
+          // For text-based files: read as plain text
+          finalContent = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve((e.target?.result as string) || "");
+            reader.onerror = () => resolve(`[File: ${selectedFile.name}]`);
+            reader.readAsText(selectedFile);
+          });
+        }
+
+        if (!finalContent.trim()) {
+          finalContent = `[File uploaded: ${selectedFile.name}. Content could not be extracted — please paste the text manually.]`;
+        }
       }
+
       const { data, error } = await supabase.from("sources").insert({
-        notebook_id: activeNb, user_id: user.id,
-        title: finalTitle, content: finalContent, type: finalType,
+        notebook_id: activeNb,
+        user_id: user.id,
+        title: finalTitle,
+        content: finalContent,
+        type: finalType,
       }).select().single();
-      if (!error && data) {
-        setSources(p => [...p, data]);
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setSources((p: any[]) => [...p, data]);
         setSrcText(""); setSrcTitle(""); setSelectedFile(null);
         setShowAddSrc(false); setSuggestions([]); setStudioResult({});
       }
     } catch (err: any) {
-      alert("Upload failed: " + err.message);
+      alert("Error saving source: " + err.message);
     } finally {
       setIsUploading(false);
     }
