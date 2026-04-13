@@ -324,6 +324,9 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
   const [audioPos, setAudioPos] = useState(0);
   const [suggestions, setSuggestions] = useState([]);
   const [dbLoading, setDbLoading] = useState(false);
+  const [slideIdx, setSlideIdx] = useState(0);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const chatEndRef = useRef(null);
   const taRef = useRef(null);
   const audioTimerRef = useRef(null);
@@ -543,39 +546,54 @@ Continue for about 20-30 exchanges covering all major topics. Make it conversati
   };
 
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+
+  useEffect(() => {
+    const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, []);
 
   const toggleAudio = () => {
     if (audioPlaying) {
       window.speechSynthesis.cancel();
       setAudioPlaying(false);
-    } else {
-      // Use browser's built-in text-to-speech
-      const cleanText = audioScript
-        .split("\n")
-        .filter(l => l.trim())
-        .map(l => l.replace(/^(ALEX|SAM):\s*/, ""))
-        .join(" ");
-
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.rate = 0.95;
-      utterance.pitch = 1;
-      utterance.volume = 1;
-
-      utterance.onstart = () => setAudioPlaying(true);
-      utterance.onend = () => { setAudioPlaying(false); setAudioPos(100); };
-      utterance.onerror = () => setAudioPlaying(false);
-
-      // Track progress
-      const totalChars = cleanText.length;
-      utterance.onboundary = (e) => {
-        const progress = (e.charIndex / totalChars) * 100;
-        setAudioPos(Math.min(progress, 99));
-      };
-
-      speechRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-      setAudioPlaying(true);
+      return;
     }
+
+    const lines = audioScript.split("\n").filter(l => l.trim() && (l.startsWith("ALEX:") || l.startsWith("SAM:")));
+    if (!lines.length) return;
+
+    // Pick two distinct voices
+    const allVoices = window.speechSynthesis.getVoices();
+    const maleVoices = allVoices.filter(v => v.name.toLowerCase().includes("male") || v.name.includes("David") || v.name.includes("Mark") || v.name.includes("Daniel") || v.name.includes("Alex"));
+    const femaleVoices = allVoices.filter(v => v.name.toLowerCase().includes("female") || v.name.includes("Samantha") || v.name.includes("Victoria") || v.name.includes("Karen") || v.name.includes("Zira"));
+    const alexVoice = maleVoices[0] || allVoices.find(v => v.lang.startsWith("en")) || allVoices[0];
+    const samVoice = femaleVoices[0] || allVoices.find(v => v.lang.startsWith("en") && v !== alexVoice) || allVoices[1] || allVoices[0];
+
+    setAudioPlaying(true);
+    let idx = 0;
+
+    const speakNext = () => {
+      if (idx >= lines.length) { setAudioPlaying(false); setAudioPos(100); return; }
+      const line = lines[idx];
+      const isAlex = line.startsWith("ALEX:");
+      const text = line.replace(/^(ALEX|SAM):\s*/, "").trim();
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.voice = isAlex ? alexVoice : samVoice;
+      utt.rate = isAlex ? 0.95 : 1.0;
+      utt.pitch = isAlex ? 0.9 : 1.2;
+      utt.volume = 1;
+      utt.onend = () => {
+        idx++;
+        setAudioPos(Math.min((idx / lines.length) * 100, 99));
+        speakNext();
+      };
+      utt.onerror = () => { idx++; speakNext(); };
+      window.speechSynthesis.speak(utt);
+    };
+
+    speakNext();
   };
 
   const handleLogout = async () => { await supabase.auth.signOut(); onLogout(); };
@@ -795,46 +813,89 @@ Continue for about 20-30 exchanges covering all major topics. Make it conversati
           <div style={{ flex: 1, overflowY: "auto", padding: 28 }}>
             <div style={{ maxWidth: 760, margin: "0 auto" }}>
               <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700 }}>🎙️ Audio Overview</h2>
-              <p style={{ margin: "0 0 28px", color: C.textMuted, fontSize: 14 }}>Generate an AI-hosted podcast conversation about your sources</p>
+              <p style={{ margin: "0 0 28px", color: C.textMuted, fontSize: 14 }}>Two AI voices discuss your sources — Alex (male) & Sam (female)</p>
               {!audioScript && !audioLoading && (
                 <div style={{ textAlign: "center", padding: "60px 40px", background: C.card, borderRadius: 20, border: `1px solid ${C.border}` }}>
                   <div style={{ fontSize: 64, marginBottom: 20 }}>🎙️</div>
                   <h3 style={{ fontSize: 20, margin: "0 0 10px" }}>Create a Podcast</h3>
-                  <p style={{ color: C.textMuted, fontSize: 14, marginBottom: 24, maxWidth: 400, margin: "0 auto 24px", lineHeight: 1.6 }}>Transform your sources into an engaging conversation between Alex and Sam.</p>
-                  <Btn variant="teal" size="lg" onClick={genAudio} disabled={!sources.length}>{sources.length === 0 ? "Add sources first" : "🎙️ Generate Audio Overview"}</Btn>
-                </div>
-              )}
-              {audioLoading && <div style={{ textAlign: "center", padding: "60px", background: C.card, borderRadius: 20, border: `1px solid ${C.border}` }}><Spinner size={40} color={C.teal} /><p style={{ color: C.textMuted, marginTop: 16 }}>Generating your podcast...</p></div>}
-              {audioScript && !audioLoading && (
-                <div>
-                  <div style={{ background: `linear-gradient(135deg, ${C.tealSoft}, ${C.card})`, border: `1px solid ${C.teal}33`, borderRadius: 20, padding: 28, marginBottom: 24 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
-                      <div style={{ width: 56, height: 56, borderRadius: 16, background: C.tealSoft, border: `1px solid ${C.teal}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>🎙️</div>
-                      <div><div style={{ fontWeight: 700, fontSize: 16, marginBottom: 3 }}>Audio Overview</div><div style={{ fontSize: 13, color: C.textMuted }}>Hosted by Alex & Sam</div></div>
+                  <p style={{ color: C.textMuted, fontSize: 14, marginBottom: 24, maxWidth: 400, margin: "0 auto 24px", lineHeight: 1.6 }}>
+                    Two distinct voices will read the podcast — Alex with a deeper voice, Sam with a higher pitch.
+                  </p>
+                  <div style={{ display: "flex", gap: 20, justifyContent: "center", marginBottom: 28 }}>
+                    <div style={{ background: C.accentSoft, border: `1px solid ${C.accent}44`, borderRadius: 12, padding: "12px 20px", textAlign: "center" }}>
+                      <div style={{ fontSize: 24, marginBottom: 6 }}>👨</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>ALEX</div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>Deep voice · Analytical</div>
                     </div>
-                    <div style={{ height: 5, background: C.border, borderRadius: 4, marginBottom: 16, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${audioPos}%`, background: `linear-gradient(90deg, ${C.teal}, ${C.accent})`, borderRadius: 4, transition: "width .5s linear" }} />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
-                      <button onClick={() => setAudioPos(0)} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 18 }}>⏮</button>
-                      <button onClick={toggleAudio} style={{ width: 50, height: 50, borderRadius: "50%", background: C.teal, border: "none", cursor: "pointer", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>{audioPlaying ? "⏸" : "▶"}</button>
-                      <button style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 18 }}>⏭</button>
+                    <div style={{ background: C.tealSoft, border: `1px solid ${C.teal}44`, borderRadius: 12, padding: "12px 20px", textAlign: "center" }}>
+                      <div style={{ fontSize: 24, marginBottom: 6 }}>👩</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.teal }}>SAM</div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>Higher pitch · Enthusiastic</div>
                     </div>
                   </div>
+                  <Btn variant="teal" size="lg" onClick={genAudio} disabled={!sources.length}>{sources.length === 0 ? "Add sources first" : "🎙️ Generate Podcast"}</Btn>
+                </div>
+              )}
+              {audioLoading && (
+                <div style={{ textAlign: "center", padding: "60px", background: C.card, borderRadius: 20, border: `1px solid ${C.border}` }}>
+                  <Spinner size={40} color={C.teal} />
+                  <p style={{ color: C.textMuted, marginTop: 16 }}>Writing your podcast script...</p>
+                </div>
+              )}
+              {audioScript && !audioLoading && (
+                <div>
+                  {/* Player */}
+                  <div style={{ background: `linear-gradient(135deg, ${C.tealSoft}, ${C.card})`, border: `1px solid ${C.teal}33`, borderRadius: 20, padding: 28, marginBottom: 24 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 12, background: C.accentSoft, border: `1px solid ${C.accent}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👨</div>
+                        <div style={{ width: 44, height: 44, borderRadius: 12, background: C.tealSoft, border: `1px solid ${C.teal}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👩</div>
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 2 }}>NotebookAI Podcast</div>
+                        <div style={{ fontSize: 12, color: C.textMuted }}>
+                          <span style={{ color: C.accent }}>Alex</span> & <span style={{ color: C.teal }}>Sam</span> · {audioScript.split("\n").filter(l => l.startsWith("ALEX:") || l.startsWith("SAM:")).length} exchanges
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ height: 6, background: C.border, borderRadius: 4, marginBottom: 16, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${audioPos}%`, background: `linear-gradient(90deg, ${C.accent}, ${C.teal})`, borderRadius: 4, transition: "width .3s" }} />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+                      <button onClick={() => { window.speechSynthesis.cancel(); setAudioPlaying(false); setAudioPos(0); }} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 20 }}>⏮</button>
+                      <button onClick={toggleAudio} style={{ width: 54, height: 54, borderRadius: "50%", background: `linear-gradient(135deg, ${C.accent}, ${C.teal})`, border: "none", cursor: "pointer", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 20px ${C.accent}40` }}>
+                        {audioPlaying ? "⏸" : "▶"}
+                      </button>
+                      <button onClick={() => { window.speechSynthesis.cancel(); setAudioPlaying(false); }} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 20 }}>⏹</button>
+                    </div>
+                    <div style={{ textAlign: "center", fontSize: 11, color: C.textMuted, marginTop: 12 }}>
+                      Uses your browser's built-in text-to-speech · Voice quality depends on your device
+                    </div>
+                  </div>
+
+                  {/* Script */}
                   <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                       <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>📜 Podcast Script</h3>
                       <Btn variant="ghost" size="sm" onClick={genAudio}>↻ Regenerate</Btn>
                     </div>
-                    <div style={{ fontSize: 13, lineHeight: 1.75, color: C.text }}>
+                    <div style={{ fontSize: 13, lineHeight: 1.75 }}>
                       {audioScript.split("\n").map((line, i) => {
                         const isAlex = line.startsWith("ALEX:");
                         const isSam = line.startsWith("SAM:");
-                        if (!line.trim()) return <div key={i} style={{ height: 8 }} />;
+                        if (!line.trim()) return <div key={i} style={{ height: 6 }} />;
+                        if (!isAlex && !isSam) return null;
                         return (
-                          <div key={i} style={{ display: "flex", gap: 12, marginBottom: 10, alignItems: "flex-start" }}>
-                            {(isAlex || isSam) && <span style={{ minWidth: 44, fontSize: 11, fontWeight: 700, color: isAlex ? C.accent : C.teal, marginTop: 2, fontFamily: "monospace" }}>{isAlex ? "ALEX" : "SAM"}</span>}
-                            <span style={{ color: (isAlex || isSam) ? C.text : C.textMuted }}>{(isAlex || isSam) ? line.replace(/^(ALEX|SAM):/, "").trim() : line}</span>
+                          <div key={i} style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "flex-start" }}>
+                            <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: "50%", background: isAlex ? C.accentSoft : C.tealSoft, border: `1px solid ${isAlex ? C.accent : C.teal}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, marginTop: 1 }}>
+                              {isAlex ? "👨" : "👩"}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: isAlex ? C.accent : C.teal, marginBottom: 3, textTransform: "uppercase", letterSpacing: 1 }}>
+                                {isAlex ? "Alex" : "Sam"}
+                              </div>
+                              <div style={{ color: C.text, lineHeight: 1.6 }}>{line.replace(/^(ALEX|SAM):\s*/, "")}</div>
+                            </div>
                           </div>
                         );
                       })}
@@ -949,8 +1010,8 @@ Continue for about 20-30 exchanges covering all major topics. Make it conversati
           <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
             <div style={{ width: 200, borderRight: `1px solid ${C.border}`, padding: "20px 12px", background: C.surface, flexShrink: 0 }}>
               <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 }}>Generate</div>
-              {[{ id: "overview", icon: "📊", label: "Overview" }, { id: "summary", icon: "📋", label: "Summary" }, { id: "studyguide", icon: "📖", label: "Study Guide" }, { id: "blog", icon: "✍️", label: "Blog Post" }, { id: "slides", icon: "📊", label: "Slide Deck" }].map(item => (
-                <button key={item.id} onClick={() => genStudio(item.id)} disabled={!sources.length || studioLoading} style={{ width: "100%", padding: "10px 12px", borderRadius: 9, border: "none", background: studioMode === item.id ? C.accentSoft : "transparent", color: studioMode === item.id ? C.accent : C.textMuted, fontSize: 13, textAlign: "left", cursor: sources.length && !studioLoading ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 8, marginBottom: 2, opacity: sources.length ? 1 : 0.45, fontFamily: "inherit", transition: "all .15s", borderLeft: studioMode === item.id ? `2px solid ${C.accent}` : "2px solid transparent" }}>
+              {[{ id: "overview", icon: "📊", label: "Overview" }, { id: "summary", icon: "📋", label: "Summary" }, { id: "studyguide", icon: "📖", label: "Study Guide" }, { id: "blog", icon: "✍️", label: "Blog Post" }, { id: "slides", icon: "🖥️", label: "Slide Deck" }].map(item => (
+                <button key={item.id} onClick={() => { genStudio(item.id); setSlideIdx(0); }} disabled={!sources.length || studioLoading} style={{ width: "100%", padding: "10px 12px", borderRadius: 9, border: "none", background: studioMode === item.id ? C.accentSoft : "transparent", color: studioMode === item.id ? C.accent : C.textMuted, fontSize: 13, textAlign: "left", cursor: sources.length && !studioLoading ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 8, marginBottom: 2, opacity: sources.length ? 1 : 0.45, fontFamily: "inherit", transition: "all .15s", borderLeft: studioMode === item.id ? `2px solid ${C.accent}` : "2px solid transparent" }}>
                   {item.icon} {item.label}
                 </button>
               ))}
@@ -959,26 +1020,89 @@ Continue for about 20-30 exchanges covering all major topics. Make it conversati
             <div style={{ flex: 1, overflowY: "auto", padding: 28 }}>
               {studioLoading && !["quiz","flashcards"].includes(studioMode) ? (
                 <div style={{ textAlign: "center", padding: "80px 0" }}><Spinner size={36} color={C.accent} /><p style={{ color: C.textMuted, marginTop: 16 }}>Generating...</p></div>
-              ) : studioResult[studioMode] ? (
+              ) : studioResult[studioMode as string] ? (
                 <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-                    <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{{ overview: "📊 Overview", summary: "📋 Summary", studyguide: "📖 Study Guide", blog: "✍️ Blog Post", slides: "📊 Slide Deck" }[studioMode as string]}</h2>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {studioMode === "slides" && (
-                        <Btn variant="teal" size="sm" onClick={() => downloadSlides(studioResult[studioMode])}>⬇️ Download Slides</Btn>
-                      )}
-                      {studioMode === "blog" && (
-                        <Btn variant="teal" size="sm" onClick={() => downloadText(studioResult[studioMode], "blog-post.txt")}>⬇️ Download</Btn>
-                      )}
-                      {studioMode === "studyguide" && (
-                        <Btn variant="teal" size="sm" onClick={() => downloadText(studioResult[studioMode], "study-guide.txt")}>⬇️ Download</Btn>
-                      )}
-                      <Btn variant="ghost" size="sm" onClick={() => genStudio(studioMode)}>↻ Regenerate</Btn>
+                  {studioMode === "slides" ? (() => {
+                    // Parse slides from markdown
+                    const slideBlocks = (studioResult[studioMode as string] as string)
+                      .split(/\n---\n|^---$/m)
+                      .map((s: string) => s.trim())
+                      .filter((s: string) => s.length > 0);
+                    const currentSlide = slideBlocks[slideIdx] || slideBlocks[0] || "";
+                    const titleMatch = currentSlide.match(/^##\s+(?:Slide\s+\d+[:\s]*)?(.+)$/m);
+                    const slideTitle = titleMatch ? titleMatch[1].trim() : `Slide ${slideIdx + 1}`;
+                    const bulletLines = currentSlide.split("\n").filter((l: string) => l.trim().startsWith("-") || l.trim().startsWith("•")).map((l: string) => l.replace(/^[-•]\s*/, "").trim());
+                    const speakerNote = currentSlide.match(/\*\*Speaker Note[:\s]*\*\*(.*?)(?:\n|$)/i)?.[1]?.trim() || "";
+                    return (
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+                          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>🖥️ Slide Deck</h2>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <Btn variant="teal" size="sm" onClick={() => downloadSlides(studioResult[studioMode as string] as string)}>⬇️ Download</Btn>
+                            <Btn variant="ghost" size="sm" onClick={() => { genStudio("slides"); setSlideIdx(0); }}>↻ Regenerate</Btn>
+                          </div>
+                        </div>
+                        {/* Slide preview */}
+                        <div style={{ background: `linear-gradient(135deg, #0d1628, #131720)`, border: `1px solid ${C.accent}33`, borderRadius: 20, padding: "48px 52px", marginBottom: 16, minHeight: 320, display: "flex", flexDirection: "column", justifyContent: "center", position: "relative", boxShadow: `0 8px 40px #00000060` }}>
+                          <div style={{ position: "absolute", top: 16, right: 20, fontSize: 12, color: C.textMuted, fontFamily: "monospace" }}>{slideIdx + 1} / {slideBlocks.length}</div>
+                          <div style={{ fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: 2, marginBottom: 16, fontWeight: 700 }}>NotebookAI</div>
+                          <h2 style={{ fontSize: 28, fontWeight: 700, margin: "0 0 24px", color: C.text, lineHeight: 1.2 }}>{slideTitle}</h2>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                            {bulletLines.map((b: string, i: number) => (
+                              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                                <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent, marginTop: 6, flexShrink: 0 }} />
+                                <span style={{ fontSize: 16, color: C.textDim, lineHeight: 1.5 }}>{b}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {slideIdx === 0 && <div style={{ position: "absolute", bottom: 20, left: 52, right: 52, height: 2, background: `linear-gradient(90deg, ${C.accent}, ${C.teal})`, borderRadius: 2, opacity: 0.4 }} />}
+                        </div>
+                        {/* Speaker note */}
+                        {speakerNote && (
+                          <div style={{ background: C.amberSoft, border: `1px solid ${C.amber}33`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: C.textDim }}>
+                            <span style={{ color: C.amber, fontWeight: 700 }}>📝 Speaker note: </span>{speakerNote}
+                          </div>
+                        )}
+                        {/* Navigation */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                          <Btn variant="ghost" onClick={() => setSlideIdx(i => Math.max(0, i - 1))} disabled={slideIdx === 0}>← Prev</Btn>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            {slideBlocks.map((_: any, i: number) => (
+                              <div key={i} onClick={() => setSlideIdx(i)} style={{ width: i === slideIdx ? 24 : 8, height: 8, borderRadius: 4, background: i === slideIdx ? C.accent : C.border, cursor: "pointer", transition: "all .2s" }} />
+                            ))}
+                          </div>
+                          <Btn onClick={() => setSlideIdx(i => Math.min(slideBlocks.length - 1, i + 1))} disabled={slideIdx === slideBlocks.length - 1}>Next →</Btn>
+                        </div>
+                        {/* Slide thumbnails */}
+                        <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
+                          {slideBlocks.map((slide: string, i: number) => {
+                            const t = slide.match(/^##\s+(?:Slide\s+\d+[:\s]*)?(.+)$/m)?.[1]?.trim() || `Slide ${i + 1}`;
+                            return (
+                              <div key={i} onClick={() => setSlideIdx(i)} style={{ flexShrink: 0, width: 120, background: i === slideIdx ? C.accentSoft : C.card, border: `1px solid ${i === slideIdx ? C.accent : C.border}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer", transition: "all .15s" }}>
+                                <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>{i + 1}</div>
+                                <div style={{ fontSize: 11, color: i === slideIdx ? C.accent : C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })() : (
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+                        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{{ overview: "📊 Overview", summary: "📋 Summary", studyguide: "📖 Study Guide", blog: "✍️ Blog Post" }[studioMode as string]}</h2>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {(studioMode === "blog" || studioMode === "studyguide") && (
+                            <Btn variant="teal" size="sm" onClick={() => downloadText(studioResult[studioMode as string] as string, studioMode === "blog" ? "blog-post.txt" : "study-guide.txt")}>⬇️ Download</Btn>
+                          )}
+                          <Btn variant="ghost" size="sm" onClick={() => genStudio(studioMode)}>↻ Regenerate</Btn>
+                        </div>
+                      </div>
+                      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: "24px 28px", fontSize: 14, lineHeight: 1.8, color: C.text }}>
+                        <div dangerouslySetInnerHTML={{ __html: md(studioResult[studioMode as string] as string) }} />
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: "24px 28px", fontSize: 14, lineHeight: 1.8, color: C.text }}>
-                    <div dangerouslySetInnerHTML={{ __html: md(studioResult[studioMode]) }} />
-                  </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ textAlign: "center", padding: "80px 40px" }}>
