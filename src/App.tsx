@@ -377,24 +377,20 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
         const ext = finalType;
 
         if (ext === 'pdf') {
-          // For PDFs: read as binary and extract readable ASCII text
-          finalContent = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-              const binary = e.target?.result as string || "";
-              // Extract readable text portions from PDF binary
-              const readable = binary
-                .replace(/[^\x20-\x7E\n\r\t]/g, " ")
-                .replace(/\s{3,}/g, " ")
-                .trim();
-              const meaningful = readable.split(" ").filter(w => w.length > 2).join(" ");
-              resolve(meaningful.slice(0, 8000) || `[PDF file: ${selectedFile.name}. Please paste the text content manually for best AI results.]`);
-            };
-            reader.onerror = () => resolve(`[PDF: ${selectedFile.name}]`);
-            reader.readAsBinaryString(selectedFile);
-          });
+          // Use pdf.js to extract text properly
+          const arrayBuffer = await selectedFile.arrayBuffer();
+          const pdfjsLib = await import('pdfjs-dist');
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          let fullText = "";
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            const pageText = content.items.map((item: any) => item.str).join(" ");
+            fullText += pageText + "\n";
+          }
+          finalContent = fullText.trim() || `[PDF: ${selectedFile.name} - could not extract text]`;
         } else {
-          // For text-based files: read as plain text
           finalContent = await new Promise<string>((resolve) => {
             const reader = new FileReader();
             reader.onload = (e) => resolve((e.target?.result as string) || "");
@@ -404,7 +400,7 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
         }
 
         if (!finalContent.trim()) {
-          finalContent = `[File uploaded: ${selectedFile.name}. Content could not be extracted — please paste the text manually.]`;
+          finalContent = `[File: ${selectedFile.name} - please paste text manually]`;
         }
       }
 
