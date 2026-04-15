@@ -575,54 +575,94 @@ Continue for about 20-30 exchanges covering all major topics. Make it conversati
   };
 
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const speakingRef = useRef(false);
 
   useEffect(() => {
-    const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    // Preload voices
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+    return () => { window.speechSynthesis.cancel(); };
   }, []);
 
   const toggleAudio = () => {
     if (audioPlaying) {
       window.speechSynthesis.cancel();
+      speakingRef.current = false;
       setAudioPlaying(false);
       return;
     }
 
-    const lines = audioScript.split("\n").filter(l => l.trim() && (l.startsWith("ALEX:") || l.startsWith("SAM:")));
-    if (!lines.length) return;
+    const lines = audioScript
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => l.startsWith("ALEX:") || l.startsWith("SAM:"));
 
-    // Pick two distinct voices
+    if (!lines.length) {
+      alert("No script to play! Generate a podcast first.");
+      return;
+    }
+
     const allVoices = window.speechSynthesis.getVoices();
-    const maleVoices = allVoices.filter(v => v.name.toLowerCase().includes("male") || v.name.includes("David") || v.name.includes("Mark") || v.name.includes("Daniel") || v.name.includes("Alex"));
-    const femaleVoices = allVoices.filter(v => v.name.toLowerCase().includes("female") || v.name.includes("Samantha") || v.name.includes("Victoria") || v.name.includes("Karen") || v.name.includes("Zira"));
-    const alexVoice = maleVoices[0] || allVoices.find(v => v.lang.startsWith("en")) || allVoices[0];
-    const samVoice = femaleVoices[0] || allVoices.find(v => v.lang.startsWith("en") && v !== alexVoice) || allVoices[1] || allVoices[0];
+    const enVoices = allVoices.filter(v => v.lang.startsWith("en"));
 
+    // Try to find distinct male/female voices
+    const alexVoice = enVoices.find(v =>
+      v.name.includes("David") || v.name.includes("Mark") ||
+      v.name.includes("Daniel") || v.name.includes("Alex") ||
+      v.name.toLowerCase().includes("male")
+    ) || enVoices[0] || allVoices[0];
+
+    const samVoice = enVoices.find(v =>
+      v !== alexVoice && (
+        v.name.includes("Samantha") || v.name.includes("Victoria") ||
+        v.name.includes("Karen") || v.name.includes("Zira") ||
+        v.name.includes("Susan") || v.name.toLowerCase().includes("female")
+      )
+    ) || enVoices.find(v => v !== alexVoice) || enVoices[1] || allVoices[1] || allVoices[0];
+
+    speakingRef.current = true;
     setAudioPlaying(true);
+    setAudioPos(0);
     let idx = 0;
 
     const speakNext = () => {
-      if (idx >= lines.length) { setAudioPlaying(false); setAudioPos(100); return; }
+      if (!speakingRef.current || idx >= lines.length) {
+        speakingRef.current = false;
+        setAudioPlaying(false);
+        if (idx >= lines.length) setAudioPos(100);
+        return;
+      }
+
       const line = lines[idx];
       const isAlex = line.startsWith("ALEX:");
       const text = line.replace(/^(ALEX|SAM):\s*/, "").trim();
+      if (!text) { idx++; speakNext(); return; }
+
       const utt = new SpeechSynthesisUtterance(text);
       utt.voice = isAlex ? alexVoice : samVoice;
-      utt.rate = isAlex ? 0.95 : 1.0;
-      utt.pitch = isAlex ? 0.9 : 1.2;
+      utt.rate = isAlex ? 0.9 : 1.05;
+      utt.pitch = isAlex ? 0.85 : 1.25;
       utt.volume = 1;
+
       utt.onend = () => {
+        if (!speakingRef.current) return;
         idx++;
         setAudioPos(Math.min((idx / lines.length) * 100, 99));
+        // Small pause between speakers
+        setTimeout(speakNext, 300);
+      };
+
+      utt.onerror = () => {
+        if (!speakingRef.current) return;
+        idx++;
         speakNext();
       };
-      utt.onerror = () => { idx++; speakNext(); };
+
       window.speechSynthesis.speak(utt);
     };
 
-    speakNext();
+    // Slight delay to ensure voices are loaded
+    setTimeout(speakNext, 200);
   };
 
   const handleLogout = async () => { await supabase.auth.signOut(); onLogout(); };
